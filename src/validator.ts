@@ -48,13 +48,6 @@ function readName(xml: string, i: number): string {
   return xml.substring(start, i)
 }
 
-function skipWhitespace(xml: string, i: number): number {
-  const len = xml.length
-  while (i < len && isWhitespace(xml.charCodeAt(i)))
-    i++
-  return i
-}
-
 function getLineCol(xml: string, pos: number): { line: number, col: number } {
   let line = 1
   let col = 1
@@ -75,6 +68,33 @@ function makeError(code: string, msg: string, xml: string, pos: number): Validat
   return { err: { code, msg, line, col } }
 }
 
+// CDATA detection via charCodeAt: ![CDATA[
+function isCDATAStart(xml: string, i: number): boolean {
+  return i + 7 < xml.length
+    && xml.charCodeAt(i) === 33     // !
+    && xml.charCodeAt(i + 1) === 91  // [
+    && xml.charCodeAt(i + 2) === 67  // C
+    && xml.charCodeAt(i + 3) === 68  // D
+    && xml.charCodeAt(i + 4) === 65  // A
+    && xml.charCodeAt(i + 5) === 84  // T
+    && xml.charCodeAt(i + 6) === 65  // A
+    && xml.charCodeAt(i + 7) === 91  // [
+}
+
+// DOCTYPE detection via charCodeAt: !DOCTYPE (case-insensitive)
+function isDOCTYPEStart(xml: string, i: number): boolean {
+  if (i + 7 >= xml.length || xml.charCodeAt(i) !== 33) return false // !
+  // Check DOCTYPE case-insensitively
+  const d = xml.charCodeAt(i + 1) | 32
+  const o = xml.charCodeAt(i + 2) | 32
+  const c = xml.charCodeAt(i + 3) | 32
+  const t = xml.charCodeAt(i + 4) | 32
+  const y = xml.charCodeAt(i + 5) | 32
+  const p = xml.charCodeAt(i + 6) | 32
+  const e = xml.charCodeAt(i + 7) | 32
+  return d === 100 && o === 111 && c === 99 && t === 116 && y === 121 && p === 112 && e === 101
+}
+
 export function validate(xml: string, options?: Partial<ValidatorOptions>): true | ValidationError {
   const opts = { ...defaultValidatorOptions, ...options }
   const len = xml.length
@@ -86,10 +106,17 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
 
   const tagStack: string[] = []
   let hasRoot = false
+  const unpairedSet = new Set(opts.unpairedTags)
+  const allowBooleanAttributes = opts.allowBooleanAttributes
+  const attrNames = new Set<string>()
 
   while (i < len) {
-    // Skip whitespace between tags
-    i = skipWhitespace(xml, i)
+    // Inline whitespace skip
+    while (i < len) {
+      const ch = xml.charCodeAt(i)
+      if (ch !== 32 && ch !== 9 && ch !== 10 && ch !== 13) break
+      i++
+    }
     if (i >= len)
       break
 
@@ -133,7 +160,7 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
     }
 
     // CDATA: <![CDATA[
-    if (nextCh === 33 && i + 1 < len && xml.charCodeAt(i + 1) === 91 && xml.substring(i + 1, i + 8) === '[CDATA[') {
+    if (isCDATAStart(xml, i)) {
       if (tagStack.length === 0)
         return makeError('InvalidXml', 'CDATA outside of element', xml, i - 1)
       i += 8
@@ -145,7 +172,7 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
     }
 
     // DOCTYPE: <!DOCTYPE
-    if (nextCh === 33 && xml.substring(i + 1, i + 8).toUpperCase() === 'DOCTYPE') {
+    if (isDOCTYPEStart(xml, i)) {
       i += 8
       let depth = 1
       while (i < len && depth > 0) {
@@ -179,7 +206,12 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
       if (!tagName)
         return makeError('InvalidTag', 'Invalid closing tag name', xml, tagStart)
       i += tagName.length
-      i = skipWhitespace(xml, i)
+      // Inline whitespace skip
+      while (i < len) {
+        const ch = xml.charCodeAt(i)
+        if (ch !== 32 && ch !== 9 && ch !== 10 && ch !== 13) break
+        i++
+      }
       if (i >= len || xml.charCodeAt(i) !== 62) // >
         return makeError('InvalidTag', `Expected '>' for closing tag '${tagName}'`, xml, i)
       i++ // skip >
@@ -190,7 +222,7 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
       const expectedTag = tagStack[tagStack.length - 1]
       if (expectedTag !== tagName) {
         // Check if it's an unpaired tag
-        if (opts.unpairedTags.includes(tagName))
+        if (unpairedSet.has(tagName))
           continue
         return makeError('InvalidTag', `Expected closing tag '${expectedTag}' but found '${tagName}'`, xml, tagStart - 2)
       }
@@ -208,10 +240,15 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
       return makeError('InvalidTag', 'Invalid tag name', xml, tagStart)
     i += tagName.length
 
-    // Parse attributes
-    const attrNames = new Set<string>()
+    // Parse attributes (reuse set to avoid allocation per tag)
+    attrNames.clear()
     while (i < len) {
-      i = skipWhitespace(xml, i)
+      // Inline whitespace skip
+      while (i < len) {
+        const ch = xml.charCodeAt(i)
+        if (ch !== 32 && ch !== 9 && ch !== 10 && ch !== 13) break
+        i++
+      }
       if (i >= len)
         return makeError('InvalidTag', `Unclosed opening tag '${tagName}'`, xml, tagStart - 1)
 
@@ -230,7 +267,7 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
       // End of opening tag: >
       if (ch === 62) { // >
         i++
-        if (opts.unpairedTags.includes(tagName)) {
+        if (unpairedSet.has(tagName)) {
           if (tagStack.length === 0)
             hasRoot = true
         }
@@ -248,7 +285,12 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
         return makeError('InvalidAttr', `Duplicate attribute '${attrName}' in tag '${tagName}'`, xml, i)
       attrNames.add(attrName)
       i += attrName.length
-      i = skipWhitespace(xml, i)
+      // Inline whitespace skip
+      while (i < len) {
+        const wch = xml.charCodeAt(i)
+        if (wch !== 32 && wch !== 9 && wch !== 10 && wch !== 13) break
+        i++
+      }
 
       if (i >= len)
         return makeError('InvalidAttr', `Unclosed tag '${tagName}'`, xml, tagStart - 1)
@@ -256,21 +298,25 @@ export function validate(xml: string, options?: Partial<ValidatorOptions>): true
       // Check for = value
       if (xml.charCodeAt(i) === 61) { // =
         i++
-        i = skipWhitespace(xml, i)
+        // Inline whitespace skip
+        while (i < len) {
+          const wch = xml.charCodeAt(i)
+          if (wch !== 32 && wch !== 9 && wch !== 10 && wch !== 13) break
+          i++
+        }
         if (i >= len)
           return makeError('InvalidAttr', `Expected attribute value for '${attrName}'`, xml, i)
         const quoteChar = xml.charCodeAt(i)
         if (quoteChar !== 34 && quoteChar !== 39) // " or '
           return makeError('InvalidAttr', `Attribute value must be quoted for '${attrName}'`, xml, i)
         i++
-        const valueStart = i
         while (i < len && xml.charCodeAt(i) !== quoteChar)
           i++
         if (i >= len)
-          return makeError('InvalidAttr', `Unclosed attribute value for '${attrName}'`, xml, valueStart - 1)
+          return makeError('InvalidAttr', `Unclosed attribute value for '${attrName}'`, xml, i - 1)
         i++ // skip closing quote
       }
-      else if (!opts.allowBooleanAttributes) {
+      else if (!allowBooleanAttributes) {
         return makeError('InvalidAttr', `Boolean attribute '${attrName}' not allowed`, xml, i)
       }
     }

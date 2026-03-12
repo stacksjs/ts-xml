@@ -13,7 +13,7 @@ ts-xml is a fast, zero-dependency XML parser, builder, and validator for TypeScr
 - **Fully typed** — complete TypeScript type definitions for all options and outputs
 - **Comprehensive** — entity handling, namespaces, CDATA, comments, processing instructions, stop nodes, unpaired tags, and more
 - **Well tested** — 724+ tests covering parser, builder, validator, entities, and adversarial edge cases
-- **Proven fast** — 1.2x to 5.9x faster than fast-xml-parser across all benchmarks ([see results](/advanced/benchmarks))
+- **Proven fast** — 2.3x to 6.3x faster than fast-xml-parser across all benchmarks ([see results](/advanced/benchmarks))
 
 ## Quick Example
 
@@ -60,10 +60,10 @@ Compared to fast-xml-parser (the most popular JS XML parser):
 
 | Scenario | ts-xml | fast-xml-parser | Speedup |
 |----------|--------|-----------------|---------|
-| Simple parse | 515 ns | 1.77 µs | **3.4x** |
-| Large XML (100 items) | 682 µs | 1.22 ms | **1.8x** |
-| Deep nesting (50 levels) | 10.3 µs | 60.5 µs | **5.9x** |
-| Validation | 2.96 µs | 8.11 µs | **2.7x** |
-| Round-trip (parse + build) | 14.9 µs | 34.0 µs | **2.3x** |
+| Simple parse | 344 ns | 1.64 µs | **4.8x** |
+| Large XML (100 items) | 321 µs | 1.16 ms | **3.6x** |
+| Deep nesting (50 levels) | 9.33 µs | 59.1 µs | **6.3x** |
+| Validation | 3.30 µs | 7.79 µs | **2.4x** |
+| Round-trip (parse + build) | 9.15 µs | 34.7 µs | **3.8x** |
 
 See the full [benchmark results](/advanced/benchmarks) for all 18 test scenarios.

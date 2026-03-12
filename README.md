@@ -143,37 +143,37 @@ Benchmarked on Apple M3 Pro using [mitata](https://github.com/evanwashere/mitata
 
 | Benchmark | ts-xml | fast-xml-parser | xml2js | sax |
 |-----------|--------|-----------------|--------|-----|
-| Simple XML | **515 ns** | 1.77 µs _(3.4x slower)_ | 2.14 µs | 905 ns |
-| Medium (3 products + attrs) | **14.5 µs** | 30.4 µs _(2.1x slower)_ | 19.1 µs | 14.1 µs |
-| Large (100 products) | **682 µs** | 1.22 ms _(1.8x slower)_ | 2.06 ms | 1.91 ms |
-| Very Large (1000 products) | **7.58 ms** | 13.1 ms _(1.7x slower)_ | 11.0 ms | 19.4 ms |
-| CDATA | **973 ns** | 2.90 µs _(3.0x slower)_ | 5.90 µs | 5.35 µs |
-| Deep nesting (50 levels) | **10.3 µs** | 60.5 µs _(5.9x slower)_ | 43.0 µs | 27.4 µs |
-| RSS Feed | **16.6 µs** | 35.5 µs _(2.1x slower)_ | 53.8 µs | 28.7 µs |
-| Entities | **4.96 µs** | 6.10 µs _(1.2x slower)_ | 9.48 µs | 6.35 µs |
-| Namespaces | **5.92 µs** | 14.0 µs _(2.4x slower)_ | 12.7 µs | 8.30 µs |
+| Simple XML | **344 ns** | 1.64 µs _(4.8x slower)_ | 2.03 µs | 885 ns |
+| Medium (3 products + attrs) | **6.67 µs** | 27.4 µs _(4.1x slower)_ | 18.0 µs | 12.3 µs |
+| Large (100 products) | **321 µs** | 1.16 ms _(3.6x slower)_ | 2.04 ms | 1.88 ms |
+| Very Large (1000 products) | **3.02 ms** | 13.0 ms _(4.3x slower)_ | 9.83 ms | 4.90 ms |
+| CDATA | **831 ns** | 2.89 µs _(3.5x slower)_ | 5.62 µs | 5.36 µs |
+| Deep nesting (50 levels) | **9.33 µs** | 59.1 µs _(6.3x slower)_ | 43.0 µs | 27.5 µs |
+| RSS Feed | **8.33 µs** | 40.4 µs _(4.9x slower)_ | 53.9 µs | 28.7 µs |
+| Entities | **2.28 µs** | 6.05 µs _(2.7x slower)_ | 9.42 µs | 6.42 µs |
+| Namespaces | **3.42 µs** | 14.4 µs _(4.2x slower)_ | 11.6 µs | 7.91 µs |
 
 ### Building
 
 | Benchmark | ts-xml | fast-xml-parser | xml2js |
 |-----------|--------|-----------------|--------|
-| Small object | **2.04 µs** | 3.76 µs _(1.8x slower)_ | 8.62 µs |
-| Large (100 products) | **66.2 µs** | 115 µs _(1.7x slower)_ | 202 µs |
-| Formatted output | **7.07 µs** | 9.61 µs _(1.4x slower)_ | 8.47 µs |
+| Small object | **1.61 µs** | 3.83 µs _(2.4x slower)_ | 8.60 µs |
+| Large (100 products) | **42.6 µs** | 118 µs _(2.8x slower)_ | 197 µs |
+| Formatted output | **1.67 µs** | 4.07 µs _(2.4x slower)_ | 8.05 µs |
 
 ### Validation
 
 | Benchmark | ts-xml | fast-xml-parser |
 |-----------|--------|-----------------|
-| Valid XML | **2.96 µs** | 8.11 µs _(2.7x slower)_ |
-| Large valid (1000 products) | **1.24 ms** | 3.58 ms _(2.9x slower)_ |
-| Invalid XML (early exit) | **187 ns** | 561 ns _(3.0x slower)_ |
+| Valid XML | **3.30 µs** | 7.79 µs _(2.4x slower)_ |
+| Large valid (1000 products) | **1.39 ms** | 3.37 ms _(2.4x slower)_ |
+| Invalid XML (early exit) | **260 ns** | 591 ns _(2.3x slower)_ |
 
 ### Round-trip
 
 | Benchmark | ts-xml | fast-xml-parser |
 |-----------|--------|-----------------|
-| Parse + Build (medium) | **14.9 µs** | 34.0 µs _(2.3x slower)_ |
+| Parse + Build (medium) | **9.15 µs** | 34.7 µs _(3.8x slower)_ |
 
 > Run benchmarks yourself: `bun run bench`
 

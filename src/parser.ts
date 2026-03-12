@@ -35,13 +35,112 @@ function isNameChar(ch: number): boolean {
     || (ch >= 0x203F && ch <= 0x2040)
 }
 
+// Pre-compiled regexes for parseValue
+const RE_HEX = /^0x[\da-fA-F]+$/
+const RE_SCIENTIFIC = /^[+-]?\d+(\.\d+)?[eE][+-]?\d+$/
+const RE_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)$/
+
+// CDATA check via charCodes: [CDATA[
+function isCDATA(xml: string, pos: number): boolean {
+  return xml.charCodeAt(pos) === 91      // [
+    && xml.charCodeAt(pos + 1) === 67    // C
+    && xml.charCodeAt(pos + 2) === 68    // D
+    && xml.charCodeAt(pos + 3) === 65    // A
+    && xml.charCodeAt(pos + 4) === 84    // T
+    && xml.charCodeAt(pos + 5) === 65    // A
+    && xml.charCodeAt(pos + 6) === 91    // [
+}
+
+// DOCTYPE check via charCodes
+function isDOCTYPE(xml: string, pos: number): boolean {
+  const c0 = xml.charCodeAt(pos)
+  const c1 = xml.charCodeAt(pos + 1)
+  const c2 = xml.charCodeAt(pos + 2)
+  const c3 = xml.charCodeAt(pos + 3)
+  const c4 = xml.charCodeAt(pos + 4)
+  const c5 = xml.charCodeAt(pos + 5)
+  const c6 = xml.charCodeAt(pos + 6)
+  return (c0 === 68 || c0 === 100)    // D/d
+    && (c1 === 79 || c1 === 111)      // O/o
+    && (c2 === 67 || c2 === 99)       // C/c
+    && (c3 === 84 || c3 === 116)      // T/t
+    && (c4 === 89 || c4 === 121)      // Y/y
+    && (c5 === 80 || c5 === 112)      // P/p
+    && (c6 === 69 || c6 === 101)      // E/e
+}
+
+// Read a tag/attribute name, return end position. Returns start if no valid name.
+function readNameEnd(xml: string, pos: number, len: number): number {
+  if (pos >= len || !isNameStartChar(xml.charCodeAt(pos)))
+    return pos
+  pos++
+  while (pos < len && isNameChar(xml.charCodeAt(pos)))
+    pos++
+  return pos
+}
+
 export class XMLParser {
   private options: ParserOptions
   private entityDecoder: EntityDecoder
+  private unpairedSet: Set<string>
+  private exactStopNodes: Set<string>
+  private wildcardStopSuffixes: string[]
+  // Whether jPath needs to be computed (only if callbacks/stopNodes use it)
+  private needsJPath: boolean
+
+  // Cached hot options as instance properties (set once, not per recursive call)
+  private _ignoreAttributes: boolean = true
+  private _textNodeName: string = '#text'
+  private _commentPropName: string | false = false
+  private _cdataPropName: string | false = false
+  private _piPropName: string | false = false
+  private _alwaysCreateTextNode: boolean = false
+  private _trimValues: boolean = true
+  private _processEntities: boolean = true
+  private _parseTagValue: boolean = true
+  private _parseAttributeValue: boolean = false
+  private _removeNSPrefix: boolean = false
+  private _attrPrefix: string = '@_'
+  private _attrsGroupName: string | false = false
+  private _ignorePiTags: boolean = false
+  private _ignoreDeclaration: boolean = false
 
   constructor(options?: Partial<ParserOptions>) {
     this.options = { ...defaultParserOptions, ...options }
     this.entityDecoder = new EntityDecoder(this.options.htmlEntities)
+    this.unpairedSet = new Set(this.options.unpairedTags)
+    this.exactStopNodes = new Set()
+    this.wildcardStopSuffixes = []
+    for (const stopNode of this.options.stopNodes) {
+      if (stopNode.startsWith('*.')) {
+        this.wildcardStopSuffixes.push(stopNode.substring(2))
+      }
+      else {
+        this.exactStopNodes.add(stopNode)
+      }
+    }
+    // Cache options
+    this._ignoreAttributes = this.options.ignoreAttributes
+    this._textNodeName = this.options.textNodeName
+    this._commentPropName = this.options.commentPropName
+    this._cdataPropName = this.options.cdataPropName
+    this._piPropName = this.options.piPropName
+    this._alwaysCreateTextNode = this.options.alwaysCreateTextNode
+    this._trimValues = this.options.trimValues
+    this._processEntities = this.options.processEntities
+    this._parseTagValue = this.options.parseTagValue
+    this._parseAttributeValue = this.options.parseAttributeValue
+    this._removeNSPrefix = this.options.removeNSPrefix
+    this._attrPrefix = this.options.attributeNamePrefix
+    this._attrsGroupName = this.options.attributesGroupName
+    this._ignorePiTags = this.options.ignorePiTags
+    this._ignoreDeclaration = this.options.ignoreDeclaration
+    // Only compute jPath if something actually uses it
+    this.needsJPath = this.options.stopNodes.length > 0
+      || this.options.isArray !== undefined
+      || this.options.updateTag !== undefined
+      || this.options.tagValueProcessor !== undefined
+      || this.options.attributeValueProcessor !== undefined
   }
 
   addEntity(name: string, value: string): void {
@@ -64,11 +163,8 @@ export class XMLParser {
     const result: Record<string, unknown> = {}
     const len = xml.length
     let i = 0
-
-    // Skip BOM
     if (len > 0 && xml.charCodeAt(0) === 0xFEFF)
       i = 1
-
     i = this.parseChildren(xml, i, len, result, '', [])
     return result
   }
@@ -76,73 +172,76 @@ export class XMLParser {
   private parseOrdered(xml: string): any {
     const len = xml.length
     let i = 0
-
-    // Skip BOM
     if (len > 0 && xml.charCodeAt(0) === 0xFEFF)
       i = 1
-
     const result: any[] = []
     this.parseChildrenOrdered(xml, i, len, result, '')
     return result
   }
 
-  private readTagName(xml: string, pos: number, len: number): [string, number] {
-    const start = pos
-    if (pos >= len || !isNameStartChar(xml.charCodeAt(pos)))
-      return ['', pos]
-    pos++
-    while (pos < len && isNameChar(xml.charCodeAt(pos)))
-      pos++
-    let name = xml.substring(start, pos)
-    if (this.options.removeNSPrefix) {
+  private readTagName(xml: string, pos: number, len: number): number {
+    const end = readNameEnd(xml, pos, len)
+    return end
+  }
+
+  private extractTagName(xml: string, start: number, end: number): string {
+    let name = xml.substring(start, end)
+    if (this._removeNSPrefix) {
       const colonIdx = name.indexOf(':')
       if (colonIdx !== -1)
         name = name.substring(colonIdx + 1)
     }
     if (this.options.transformTagName)
       name = this.options.transformTagName(name)
-    return [name, pos]
+    return name
   }
 
-  private skipWhitespace(xml: string, pos: number, len: number): number {
-    while (pos < len && isWhitespace(xml.charCodeAt(pos)))
-      pos++
-    return pos
-  }
-
-  private parseAttributes(xml: string, pos: number, len: number, jPath: string): [Record<string, string>, number] {
-    const attrs: Record<string, string> = {}
+  private parseAttributes(xml: string, pos: number, len: number, jPath: string, outAttrs: Record<string, string>): number {
+    let count = 0
+    const removeNS = this._removeNSPrefix
+    const transformAttr = this.options.transformAttributeName
+    const trimVals = this._trimValues
+    const processEnts = this._processEntities
+    const attrProcessor = this.options.attributeValueProcessor
 
     while (pos < len) {
-      pos = this.skipWhitespace(xml, pos, len)
+      // Inline whitespace skip
+      let ch = xml.charCodeAt(pos)
+      while (ch === 32 || ch === 9 || ch === 10 || ch === 13) {
+        pos++
+        if (pos >= len) break
+        ch = xml.charCodeAt(pos)
+      }
       if (pos >= len)
         break
-      const ch = xml.charCodeAt(pos)
       if (ch === 62 || ch === 47) // > or /
         break
 
       // Read attribute name
       const attrStart = pos
-      if (!isNameStartChar(xml.charCodeAt(pos)))
+      if (!isNameStartChar(ch))
         break
       pos++
       while (pos < len && isNameChar(xml.charCodeAt(pos)))
         pos++
       let attrName = xml.substring(attrStart, pos)
-      if (this.options.removeNSPrefix) {
+      if (removeNS) {
         const colonIdx = attrName.indexOf(':')
         if (colonIdx !== -1)
           attrName = attrName.substring(colonIdx + 1)
       }
-      if (this.options.transformAttributeName)
-        attrName = this.options.transformAttributeName(attrName)
+      if (transformAttr)
+        attrName = transformAttr(attrName)
 
-      pos = this.skipWhitespace(xml, pos, len)
+      // Skip whitespace
+      while (pos < len && isWhitespace(xml.charCodeAt(pos)))
+        pos++
 
       // Check for =
       if (pos < len && xml.charCodeAt(pos) === 61) { // =
         pos++
-        pos = this.skipWhitespace(xml, pos, len)
+        while (pos < len && isWhitespace(xml.charCodeAt(pos)))
+          pos++
         if (pos >= len)
           break
         const quoteChar = xml.charCodeAt(pos)
@@ -152,30 +251,44 @@ export class XMLParser {
           while (pos < len && xml.charCodeAt(pos) !== quoteChar)
             pos++
           let value = xml.substring(valueStart, pos)
-          if (this.options.trimValues)
-            value = value.trim()
-          if (this.options.processEntities)
+          if (trimVals && value.length > 0) {
+            const f = value.charCodeAt(0)
+            const l = value.charCodeAt(value.length - 1)
+            if (f <= 32 || l <= 32)
+              value = value.trim()
+          }
+          if (processEnts)
             value = this.entityDecoder.decodeEntities(value)
-          if (this.options.attributeValueProcessor)
-            value = this.options.attributeValueProcessor(attrName, value, jPath) ?? value
-          attrs[attrName] = value
+          if (attrProcessor)
+            value = attrProcessor(attrName, value, jPath) ?? value
+          outAttrs[attrName] = value
+          count++
           if (pos < len)
             pos++ // skip closing quote
         }
       }
       else {
         // Boolean attribute
-        attrs[attrName] = 'true'
+        outAttrs[attrName] = 'true'
+        count++
       }
     }
 
-    return [attrs, pos]
+    // Return pos, encode count into sign: negative means hasAttrs
+    return count > 0 ? -pos - 1 : pos
   }
 
   private processTagValue(value: string, tagName: string, jPath: string, hasAttributes: boolean, isLeaf: boolean): unknown {
-    if (this.options.trimValues)
-      value = value.trim()
-    if (this.options.processEntities)
+    if (this._trimValues) {
+      const vlen = value.length
+      if (vlen > 0) {
+        const first = value.charCodeAt(0)
+        const last = value.charCodeAt(vlen - 1)
+        if (first <= 32 || last <= 32)
+          value = value.trim()
+      }
+    }
+    if (this._processEntities)
       value = this.entityDecoder.decodeEntities(value)
     if (this.options.tagValueProcessor) {
       const processed = this.options.tagValueProcessor(tagName, value, jPath, hasAttributes, isLeaf)
@@ -184,7 +297,7 @@ export class XMLParser {
     }
     if (!value)
       return value
-    if (this.options.parseTagValue)
+    if (this._parseTagValue)
       return this.parseValue(value)
     return value
   }
@@ -197,30 +310,36 @@ export class XMLParser {
     if (!val)
       return val
 
+    // Fast reject: if first char can't start a number, skip all numeric parsing
+    const firstCh = val.charCodeAt(0)
+    const isNumStart = (firstCh >= 48 && firstCh <= 57) // 0-9
+      || firstCh === 43 || firstCh === 45 || firstCh === 46 // + - .
+    if (!isNumStart)
+      return val
+
     const opts = this.options.numberParseOptions
     if (opts.skipLike?.test(val))
       return val
 
     // Hex
-    if (opts.hex && /^0x[\da-fA-F]+$/.test(val))
+    if (opts.hex && firstCh === 48 && RE_HEX.test(val))
       return Number.parseInt(val, 16)
 
-    // Leading zeros check - treat as string to preserve leading zeros
-    if (val.length > 1 && val.charCodeAt(0) === 48 && val.charCodeAt(1) !== 46) {
+    // Leading zeros check
+    if (val.length > 1 && firstCh === 48 && val.charCodeAt(1) !== 46) {
       if (opts.leadingZeros)
-        return val // preserve as string
-      // else parse as number
+        return val
     }
 
     // Scientific notation
-    if (opts.scientific && /^[+-]?\d+(\.\d+)?[eE][+-]?\d+$/.test(val)) {
+    if (opts.scientific && RE_SCIENTIFIC.test(val)) {
       const num = Number(val)
       if (!Number.isNaN(num))
         return num
     }
 
     // Regular number
-    if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(val)) {
+    if (RE_NUMBER.test(val)) {
       const num = Number(val)
       if (!Number.isNaN(num))
         return num
@@ -230,38 +349,34 @@ export class XMLParser {
   }
 
   private parseAttributeValue(val: string): unknown {
-    if (!this.options.parseAttributeValue)
+    if (!this._parseAttributeValue)
       return val
     return this.parseValue(val)
   }
 
   private isStopNode(jPath: string): boolean {
-    for (const stopNode of this.options.stopNodes) {
-      if (stopNode === jPath)
+    if (this.exactStopNodes.has(jPath))
+      return true
+    for (const suffix of this.wildcardStopSuffixes) {
+      if (jPath.endsWith('.' + suffix) || jPath === suffix)
         return true
-      // Wildcard match: e.g., "*.script"
-      if (stopNode.startsWith('*.')) {
-        const suffix = stopNode.substring(2)
-        if (jPath.endsWith(`.${suffix}`) || jPath === suffix)
-          return true
-      }
     }
     return false
   }
 
-  private readStopNodeContent(xml: string, pos: number, len: number, tagName: string): [string, number] {
-    const closingTag = `</${tagName}`
+  private readStopNodeContent(xml: string, pos: number, len: number, tagName: string): { content: string, pos: number } {
+    const closingTag = '</' + tagName
     const idx = xml.indexOf(closingTag, pos)
-    if (idx === -1)
-      return [xml.substring(pos), len]
+    if (idx === -1) {
+      return { content: xml.substring(pos), pos: len }
+    }
     const content = xml.substring(pos, idx)
-    // Skip past closing tag
     let endPos = idx + closingTag.length
     while (endPos < len && xml.charCodeAt(endPos) !== 62)
       endPos++
     if (endPos < len)
-      endPos++ // skip >
-    return [content, endPos]
+      endPos++
+    return { content, pos: endPos }
   }
 
   private addToObj(obj: Record<string, unknown>, key: string, value: unknown, jPath: string, isLeaf: boolean, isAttribute: boolean): void {
@@ -285,29 +400,32 @@ export class XMLParser {
   private flushText(
     textContent: string,
     cdataBuffer: string,
-    textNodeName: string,
     jPath: string,
     parent: Record<string, unknown>,
   ): void {
     if (!textContent && !cdataBuffer)
       return
 
-    let value: string
+    const textNodeName = this._textNodeName
+
     if (cdataBuffer) {
-      // Merge: decode remaining regular text, concat with pre-built buffer
       let decodedText = textContent
-      if (decodedText && this.options.processEntities)
+      if (decodedText && this._processEntities)
         decodedText = this.entityDecoder.decodeEntities(decodedText)
-      value = cdataBuffer + decodedText
-      if (this.options.trimValues)
-        value = value.trim()
+      let value = cdataBuffer + decodedText
+      if (this._trimValues && value.length > 0) {
+        const f = value.charCodeAt(0)
+        const l = value.charCodeAt(value.length - 1)
+        if (f <= 32 || l <= 32)
+          value = value.trim()
+      }
       if (this.options.tagValueProcessor) {
         const processed = this.options.tagValueProcessor(textNodeName, value, jPath, false, true)
         if (processed !== undefined)
           value = processed
       }
       if (value) {
-        const parsed = this.options.parseTagValue ? this.parseValue(value) : value
+        const parsed = this._parseTagValue ? this.parseValue(value) : value
         if (parsed !== undefined && parsed !== '')
           this.addToObj(parent, textNodeName, parsed, jPath, true, false)
       }
@@ -321,19 +439,24 @@ export class XMLParser {
 
   private parseChildren(xml: string, pos: number, len: number, parent: Record<string, unknown>, jPath: string, unpairedStack: string[]): number {
     let textContent = ''
-    let cdataBuffer = '' // pre-decoded text + raw CDATA content
-    const textNodeName = this.options.textNodeName
+    let cdataBuffer = ''
+    const needsJPath = this.needsJPath
 
     while (pos < len) {
       const ch = xml.charCodeAt(pos)
 
       if (ch !== 60) { // Not <
-        textContent += xml[pos]
+        const textStart = pos
         pos++
+        while (pos < len && xml.charCodeAt(pos) !== 60)
+          pos++
+        if (!textContent)
+          textContent = xml.substring(textStart, pos)
+        else
+          textContent += xml.substring(textStart, pos)
         continue
       }
 
-      // We have <
       if (pos + 1 >= len)
         break
 
@@ -341,29 +464,27 @@ export class XMLParser {
 
       // Comment: <!--
       if (nextCh === 33 && pos + 3 < len && xml.charCodeAt(pos + 2) === 45 && xml.charCodeAt(pos + 3) === 45) {
-        // Flush text
         if (textContent || cdataBuffer) {
-          this.flushText(textContent, cdataBuffer, textNodeName, jPath, parent)
+          this.flushText(textContent, cdataBuffer, jPath, parent)
           textContent = ''
           cdataBuffer = ''
         }
-
         pos += 4
         const endComment = xml.indexOf('-->', pos)
         if (endComment === -1) {
           pos = len
           break
         }
-        if (this.options.commentPropName) {
+        if (this._commentPropName) {
           const comment = xml.substring(pos, endComment)
-          this.addToObj(parent, this.options.commentPropName, comment, jPath, true, false)
+          this.addToObj(parent, this._commentPropName, comment, jPath, true, false)
         }
         pos = endComment + 3
         continue
       }
 
       // CDATA: <![CDATA[
-      if (nextCh === 33 && pos + 8 < len && xml.substring(pos + 2, pos + 9) === '[CDATA[') {
+      if (nextCh === 33 && pos + 8 < len && isCDATA(xml, pos + 2)) {
         pos += 9
         const endCdata = xml.indexOf(']]>', pos)
         if (endCdata === -1) {
@@ -371,18 +492,16 @@ export class XMLParser {
           break
         }
         const cdataContent = xml.substring(pos, endCdata)
-        if (this.options.cdataPropName) {
-          // Flush text first
-          this.flushText(textContent, cdataBuffer, textNodeName, jPath, parent)
+        if (this._cdataPropName) {
+          this.flushText(textContent, cdataBuffer, jPath, parent)
           textContent = ''
           cdataBuffer = ''
-          this.addToObj(parent, this.options.cdataPropName, cdataContent, jPath, true, false)
+          this.addToObj(parent, this._cdataPropName, cdataContent, jPath, true, false)
         }
         else {
-          // Pre-decode any pending regular text and move to cdataBuffer
           if (textContent) {
             let decoded = textContent
-            if (this.options.processEntities)
+            if (this._processEntities)
               decoded = this.entityDecoder.decodeEntities(decoded)
             cdataBuffer += decoded
             textContent = ''
@@ -394,15 +513,13 @@ export class XMLParser {
       }
 
       // DOCTYPE: <!DOCTYPE
-      if (nextCh === 33 && pos + 9 < len && xml.substring(pos + 2, pos + 9).toUpperCase() === 'DOCTYPE') {
+      if (nextCh === 33 && pos + 9 < len && isDOCTYPE(xml, pos + 2)) {
         pos += 9
         let depth = 1
         while (pos < len && depth > 0) {
           const c = xml.charCodeAt(pos)
-          if (c === 60)
-            depth++
-          else if (c === 62)
-            depth--
+          if (c === 60) depth++
+          else if (c === 62) depth--
           pos++
         }
         continue
@@ -412,7 +529,6 @@ export class XMLParser {
       if (nextCh === 63) { // ?
         pos += 2
         const piNameStart = pos
-        // Read PI target name
         while (pos < len && !isWhitespace(xml.charCodeAt(pos)) && xml.charCodeAt(pos) !== 63)
           pos++
         const piTarget = xml.substring(piNameStart, pos)
@@ -423,15 +539,14 @@ export class XMLParser {
         }
         const piContent = xml.substring(pos, endPi).trim()
 
-        // Handle xml declaration
         if (piTarget === 'xml') {
-          if (!this.options.ignoreDeclaration && this.options.piPropName) {
+          if (!this._ignoreDeclaration && this._piPropName) {
             const declAttrs = this.parsePiAttributes(piContent)
-            this.addToObj(parent, this.options.piPropName, { [piTarget]: declAttrs }, jPath, true, false)
+            this.addToObj(parent, this._piPropName, { [piTarget]: declAttrs }, jPath, true, false)
           }
         }
-        else if (!this.options.ignorePiTags && this.options.piPropName) {
-          this.addToObj(parent, this.options.piPropName, { [piTarget]: piContent }, jPath, true, false)
+        else if (!this._ignorePiTags && this._piPropName) {
+          this.addToObj(parent, this._piPropName, { [piTarget]: piContent }, jPath, true, false)
         }
 
         pos = endPi + 2
@@ -440,61 +555,67 @@ export class XMLParser {
 
       // Closing tag: </
       if (nextCh === 47) { // /
-        // Flush text
         if (textContent || cdataBuffer) {
-          this.flushText(textContent, cdataBuffer, textNodeName, jPath, parent)
+          this.flushText(textContent, cdataBuffer, jPath, parent)
           textContent = ''
           cdataBuffer = ''
         }
 
         pos += 2
-        const [closingName, afterName] = this.readTagName(xml, pos, len)
-        pos = afterName
-        pos = this.skipWhitespace(xml, pos, len)
+        const nameStart = pos
+        const nameEnd = this.readTagName(xml, pos, len)
+        const closingName = this.extractTagName(xml, nameStart, nameEnd)
+        pos = nameEnd
+        while (pos < len && isWhitespace(xml.charCodeAt(pos)))
+          pos++
         if (pos < len && xml.charCodeAt(pos) === 62)
-          pos++ // skip >
+          pos++
 
-        // Check if it's an unpaired tag in our stack
         if (unpairedStack.length > 0 && unpairedStack[unpairedStack.length - 1] === closingName) {
           unpairedStack.pop()
           continue
         }
 
-        return pos // Return to parent
+        return pos
       }
 
       // Opening tag
-      // Flush text
       if (textContent || cdataBuffer) {
-        this.flushText(textContent, cdataBuffer, textNodeName, jPath, parent)
+        this.flushText(textContent, cdataBuffer, jPath, parent)
         textContent = ''
         cdataBuffer = ''
       }
 
       pos++ // skip <
-      const [tagName, afterTagName] = this.readTagName(xml, pos, len)
+      const nameStart = pos
+      const nameEnd = this.readTagName(xml, pos, len)
+      const tagName = this.extractTagName(xml, nameStart, nameEnd)
       if (!tagName) {
-        pos = afterTagName + 1
+        pos = nameEnd + 1
         continue
       }
-      pos = afterTagName
+      pos = nameEnd
 
-      const childJPath = jPath ? `${jPath}.${tagName}` : tagName
+      const childJPath = needsJPath ? (jPath ? jPath + '.' + tagName : tagName) : ''
 
       // Parse attributes
-      let attrs: Record<string, string> = {}
-      if (!this.options.ignoreAttributes) {
-        const [parsedAttrs, afterAttrs] = this.parseAttributes(xml, pos, len, childJPath)
-        attrs = parsedAttrs
-        pos = afterAttrs
+      let attrs: Record<string, string> = {} as Record<string, string>
+      let hasAttrs = false
+      if (!this._ignoreAttributes) {
+        const attrResult = this.parseAttributes(xml, pos, len, childJPath, attrs)
+        if (attrResult < 0) {
+          pos = -attrResult - 1
+          hasAttrs = true
+        }
+        else {
+          pos = attrResult
+        }
       }
       else {
-        // Skip attributes (handle quoted values containing > or /)
         while (pos < len) {
           const c = xml.charCodeAt(pos)
-          if (c === 62 || c === 47) // > or /
-            break
-          if (c === 34 || c === 39) { // quote
+          if (c === 62 || c === 47) break
+          if (c === 34 || c === 39) {
             pos++
             while (pos < len && xml.charCodeAt(pos) !== c)
               pos++
@@ -507,15 +628,14 @@ export class XMLParser {
       if (this.options.updateTag) {
         const newName = this.options.updateTag(tagName, childJPath, attrs)
         if (newName === false) {
-          // Skip this tag entirely
-          pos = this.skipWhitespace(xml, pos, len)
-          if (pos < len && xml.charCodeAt(pos) === 47) { // self-closing
+          while (pos < len && isWhitespace(xml.charCodeAt(pos)))
+            pos++
+          if (pos < len && xml.charCodeAt(pos) === 47) {
             pos += 2
           }
           else if (pos < len && xml.charCodeAt(pos) === 62) {
             pos++
-            // Skip children until closing tag
-            const closingTag = `</${tagName}>`
+            const closingTag = '</' + tagName + '>'
             const closeIdx = xml.indexOf(closingTag, pos)
             if (closeIdx !== -1)
               pos = closeIdx + closingTag.length
@@ -524,80 +644,90 @@ export class XMLParser {
         }
       }
 
-      pos = this.skipWhitespace(xml, pos, len)
+      // Inline whitespace skip
+      while (pos < len && isWhitespace(xml.charCodeAt(pos)))
+        pos++
 
       // Self-closing tag: />
       if (pos < len && xml.charCodeAt(pos) === 47) { // /
-        pos += 2 // skip />
-        const childObj: Record<string, unknown> = {}
-
-        if (!this.options.ignoreAttributes && Object.keys(attrs).length > 0) {
-          this.applyAttributes(childObj, attrs, childJPath)
+        pos += 2
+        if (hasAttrs || this._alwaysCreateTextNode) {
+          const childObj: Record<string, unknown> = {}
+          if (hasAttrs)
+            this.applyAttributes(childObj, attrs, childJPath)
+          if (this._alwaysCreateTextNode)
+            childObj[this._textNodeName] = ''
+          this.addToObj(parent, tagName, childObj, childJPath, true, false)
         }
-
-        if (this.options.alwaysCreateTextNode) {
-          childObj[textNodeName] = ''
+        else {
+          this.addToObj(parent, tagName, '', childJPath, true, false)
         }
-
-        this.addToObj(parent, tagName, Object.keys(childObj).length > 0 ? childObj : '', childJPath, true, false)
         continue
       }
 
       // Regular opening tag: >
       if (pos < len && xml.charCodeAt(pos) === 62) {
-        pos++ // skip >
+        pos++
 
         // Unpaired tag
-        if (this.options.unpairedTags.includes(tagName)) {
-          const childObj: Record<string, unknown> = {}
-          if (!this.options.ignoreAttributes && Object.keys(attrs).length > 0)
+        if (this.unpairedSet.has(tagName)) {
+          if (hasAttrs) {
+            const childObj: Record<string, unknown> = {}
             this.applyAttributes(childObj, attrs, childJPath)
-          this.addToObj(parent, tagName, Object.keys(childObj).length > 0 ? childObj : '', childJPath, true, false)
+            this.addToObj(parent, tagName, childObj, childJPath, true, false)
+          }
+          else {
+            this.addToObj(parent, tagName, '', childJPath, true, false)
+          }
           unpairedStack.push(tagName)
           continue
         }
 
         // Stop node
-        if (this.isStopNode(childJPath)) {
-          const [stopContent, afterStop] = this.readStopNodeContent(xml, pos, len, tagName)
-          const childObj: Record<string, unknown> = {}
-          if (!this.options.ignoreAttributes && Object.keys(attrs).length > 0)
-            this.applyAttributes(childObj, attrs, childJPath)
-          if (stopContent) {
-            childObj[textNodeName] = stopContent
+        if (this.exactStopNodes.size > 0 || this.wildcardStopSuffixes.length > 0) {
+          if (this.isStopNode(childJPath)) {
+            const stopResult = this.readStopNodeContent(xml, pos, len, tagName)
+            const childObj: Record<string, unknown> = {}
+            if (hasAttrs)
+              this.applyAttributes(childObj, attrs, childJPath)
+            if (stopResult.content)
+              childObj[this._textNodeName] = stopResult.content
+            this.addToObj(parent, tagName, childObj, childJPath, true, false)
+            pos = stopResult.pos
+            continue
           }
-          this.addToObj(parent, tagName, childObj, childJPath, true, false)
-          pos = afterStop
-          continue
         }
 
         // Regular element — parse children
         const childObj: Record<string, unknown> = {}
-        const hasAttrs = !this.options.ignoreAttributes && Object.keys(attrs).length > 0
         if (hasAttrs)
           this.applyAttributes(childObj, attrs, childJPath)
 
         pos = this.parseChildren(xml, pos, len, childObj, childJPath, unpairedStack)
 
         // Determine if this is a leaf (only has text content)
-        const childKeys = Object.keys(childObj)
-        const isLeaf = childKeys.length === 0
-          || (childKeys.length === 1 && childKeys[0] === textNodeName)
-
-        if (isLeaf && !hasAttrs && !this.options.alwaysCreateTextNode) {
-          // Collapse to simple value
-          const textValue = childObj[textNodeName]
-          this.addToObj(parent, tagName, textValue !== undefined ? textValue : '', childJPath, true, false)
+        const textNodeName = this._textNodeName
+        const textValue = childObj[textNodeName]
+        if (!hasAttrs && !this._alwaysCreateTextNode) {
+          // Check if childObj has only textNodeName or is empty
+          let isLeaf = true
+          for (const k in childObj) {
+            if (k !== textNodeName) {
+              isLeaf = false
+              break
+            }
+          }
+          if (isLeaf) {
+            this.addToObj(parent, tagName, textValue !== undefined ? textValue : '', childJPath, true, false)
+            continue
+          }
         }
-        else {
-          this.addToObj(parent, tagName, childObj, childJPath, false, false)
-        }
+        this.addToObj(parent, tagName, childObj, childJPath, false, false)
       }
     }
 
-    // Flush remaining text
     if (textContent || cdataBuffer) {
-      this.flushText(textContent, cdataBuffer, textNodeName, jPath, parent)
+      this.flushText(textContent, cdataBuffer, jPath, parent)
     }
 
     return pos
@@ -605,14 +735,20 @@ export class XMLParser {
 
   private parseChildrenOrdered(xml: string, pos: number, len: number, parent: any[], jPath: string): number {
     let textContent = ''
-    const textNodeName = this.options.textNodeName
+    const needsJPath = this.needsJPath
 
     while (pos < len) {
       const ch = xml.charCodeAt(pos)
 
       if (ch !== 60) {
-        textContent += xml[pos]
+        const textStart = pos
         pos++
+        while (pos < len && xml.charCodeAt(pos) !== 60)
+          pos++
+        if (!textContent)
+          textContent = xml.substring(textStart, pos)
+        else
+          textContent += xml.substring(textStart, pos)
         continue
       }
 
@@ -624,35 +760,35 @@ export class XMLParser {
       // Comment
       if (nextCh === 33 && pos + 3 < len && xml.charCodeAt(pos + 2) === 45 && xml.charCodeAt(pos + 3) === 45) {
         if (textContent) {
-          const processed = this.processTagValue(textContent, textNodeName, jPath, false, true)
+          const processed = this.processTagValue(textContent, this._textNodeName, jPath, false, true)
           if (processed !== undefined && processed !== '')
-            parent.push({ [textNodeName]: processed })
+            parent.push({ [this._textNodeName]: processed })
           textContent = ''
         }
         pos += 4
         const endComment = xml.indexOf('-->', pos)
         if (endComment === -1) { pos = len; break }
-        if (this.options.commentPropName) {
-          parent.push({ [this.options.commentPropName]: [{ [textNodeName]: xml.substring(pos, endComment) }] })
+        if (this._commentPropName) {
+          parent.push({ [this._commentPropName]: [{ [this._textNodeName]: xml.substring(pos, endComment) }] })
         }
         pos = endComment + 3
         continue
       }
 
       // CDATA
-      if (nextCh === 33 && pos + 8 < len && xml.substring(pos + 2, pos + 9) === '[CDATA[') {
+      if (nextCh === 33 && pos + 8 < len && isCDATA(xml, pos + 2)) {
         pos += 9
         const endCdata = xml.indexOf(']]>', pos)
         if (endCdata === -1) { pos = len; break }
         const cdataContent = xml.substring(pos, endCdata)
-        if (this.options.cdataPropName) {
+        if (this._cdataPropName) {
           if (textContent) {
-            const processed = this.processTagValue(textContent, textNodeName, jPath, false, true)
+            const processed = this.processTagValue(textContent, this._textNodeName, jPath, false, true)
             if (processed !== undefined && processed !== '')
-              parent.push({ [textNodeName]: processed })
+              parent.push({ [this._textNodeName]: processed })
             textContent = ''
           }
-          parent.push({ [this.options.cdataPropName]: [{ [textNodeName]: cdataContent }] })
+          parent.push({ [this._cdataPropName]: [{ [this._textNodeName]: cdataContent }] })
         }
         else {
           textContent += cdataContent
@@ -662,7 +798,7 @@ export class XMLParser {
       }
 
       // DOCTYPE
-      if (nextCh === 33 && pos + 9 < len && xml.substring(pos + 2, pos + 9).toUpperCase() === 'DOCTYPE') {
+      if (nextCh === 33 && pos + 9 < len && isDOCTYPE(xml, pos + 2)) {
         pos += 9
         let depth = 1
         while (pos < len && depth > 0) {
@@ -686,46 +822,54 @@ export class XMLParser {
       // Closing tag
       if (nextCh === 47) {
         if (textContent) {
-          const processed = this.processTagValue(textContent, textNodeName, jPath, false, true)
+          const processed = this.processTagValue(textContent, this._textNodeName, jPath, false, true)
           if (processed !== undefined && processed !== '')
-            parent.push({ [textNodeName]: processed })
+            parent.push({ [this._textNodeName]: processed })
           textContent = ''
         }
         pos += 2
-        const [, afterName] = this.readTagName(xml, pos, len)
-        pos = afterName
-        pos = this.skipWhitespace(xml, pos, len)
+        const nameEnd = this.readTagName(xml, pos, len)
+        pos = nameEnd
+        while (pos < len && isWhitespace(xml.charCodeAt(pos)))
+          pos++
         if (pos < len && xml.charCodeAt(pos) === 62) pos++
         return pos
       }
 
       // Opening tag
       if (textContent) {
-        const processed = this.processTagValue(textContent, textNodeName, jPath, false, true)
+        const processed = this.processTagValue(textContent, this._textNodeName, jPath, false, true)
         if (processed !== undefined && processed !== '')
-          parent.push({ [textNodeName]: processed })
+          parent.push({ [this._textNodeName]: processed })
         textContent = ''
       }
 
       pos++
-      const [tagName, afterTagName] = this.readTagName(xml, pos, len)
-      if (!tagName) { pos = afterTagName + 1; continue }
-      pos = afterTagName
+      const nameStart = pos
+      const nameEnd = this.readTagName(xml, pos, len)
+      const tagName = this.extractTagName(xml, nameStart, nameEnd)
+      if (!tagName) { pos = nameEnd + 1; continue }
+      pos = nameEnd
 
-      const childJPath = jPath ? `${jPath}.${tagName}` : tagName
+      const childJPath = needsJPath ? (jPath ? jPath + '.' + tagName : tagName) : ''
 
-      let attrs: Record<string, string> = {}
-      if (!this.options.ignoreAttributes) {
-        const [parsedAttrs, afterAttrs] = this.parseAttributes(xml, pos, len, childJPath)
-        attrs = parsedAttrs
-        pos = afterAttrs
+      let attrs: Record<string, string> = {} as Record<string, string>
+      let hasAttrs = false
+      if (!this._ignoreAttributes) {
+        const attrResult = this.parseAttributes(xml, pos, len, childJPath, attrs)
+        if (attrResult < 0) {
+          pos = -attrResult - 1
+          hasAttrs = true
+        }
+        else {
+          pos = attrResult
+        }
       }
       else {
-        // Skip attributes (handle quoted values containing > or /)
         while (pos < len) {
           const c = xml.charCodeAt(pos)
           if (c === 62 || c === 47) break
-          if (c === 34 || c === 39) { // quote
+          if (c === 34 || c === 39) {
             pos++
             while (pos < len && xml.charCodeAt(pos) !== c)
               pos++
@@ -734,16 +878,15 @@ export class XMLParser {
         }
       }
 
-      pos = this.skipWhitespace(xml, pos, len)
+      while (pos < len && isWhitespace(xml.charCodeAt(pos)))
+        pos++
 
       const orderedNode: any = { [tagName]: [] }
-      // Add attributes
-      if (!this.options.ignoreAttributes && Object.keys(attrs).length > 0) {
+      if (hasAttrs) {
         const attrKey = ':@'
         orderedNode[attrKey] = {}
-        for (const [name, value] of Object.entries(attrs)) {
-          const prefixedName = this.options.attributeNamePrefix + name
-          orderedNode[attrKey][prefixedName] = this.parseAttributeValue(value)
+        for (const name in attrs) {
+          orderedNode[attrKey][this._attrPrefix + name] = this.parseAttributeValue(attrs[name])
         }
       }
 
@@ -761,27 +904,26 @@ export class XMLParser {
     }
 
     if (textContent) {
-      const processed = this.processTagValue(textContent, textNodeName, jPath, false, true)
+      const processed = this.processTagValue(textContent, this._textNodeName, jPath, false, true)
       if (processed !== undefined && processed !== '')
-        parent.push({ [textNodeName]: processed })
+        parent.push({ [this._textNodeName]: processed })
     }
 
     return pos
   }
 
   private applyAttributes(obj: Record<string, unknown>, attrs: Record<string, string>, jPath: string): void {
-    if (this.options.attributesGroupName) {
+    const prefix = this._attrPrefix
+    if (this._attrsGroupName) {
       const group: Record<string, unknown> = {}
-      for (const [name, value] of Object.entries(attrs)) {
-        const prefixedName = this.options.attributeNamePrefix + name
-        group[prefixedName] = this.parseAttributeValue(value)
+      for (const name in attrs) {
+        group[prefix + name] = this.parseAttributeValue(attrs[name])
       }
-      obj[this.options.attributesGroupName] = group
+      obj[this._attrsGroupName] = group
     }
     else {
-      for (const [name, value] of Object.entries(attrs)) {
-        const prefixedName = this.options.attributeNamePrefix + name
-        obj[prefixedName] = this.parseAttributeValue(value)
+      for (const name in attrs) {
+        obj[prefix + name] = this.parseAttributeValue(attrs[name])
       }
     }
   }
@@ -792,13 +934,11 @@ export class XMLParser {
     const len = content.length
 
     while (i < len) {
-      // Skip whitespace
       while (i < len && isWhitespace(content.charCodeAt(i)))
         i++
       if (i >= len)
         break
 
-      // Read name
       const nameStart = i
       while (i < len && !isWhitespace(content.charCodeAt(i)) && content.charCodeAt(i) !== 61)
         i++
@@ -806,7 +946,6 @@ export class XMLParser {
       if (!name)
         break
 
-      // Skip whitespace
       while (i < len && isWhitespace(content.charCodeAt(i)))
         i++
 
@@ -816,7 +955,7 @@ export class XMLParser {
           i++
         if (i < len) {
           const quote = content.charCodeAt(i)
-          if (quote === 34 || quote === 39) { // " or '
+          if (quote === 34 || quote === 39) {
             i++
             const valueStart = i
             while (i < len && content.charCodeAt(i) !== quote)

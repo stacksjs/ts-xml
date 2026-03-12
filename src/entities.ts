@@ -249,66 +249,145 @@ export class EntityDecoder {
   }
 
   decodeEntities(text: string): string {
-    if (text.indexOf('&') === -1)
+    // Fast path: no ampersand means no entities
+    let ampIdx = text.indexOf('&')
+    if (ampIdx === -1)
       return text
 
-    return text.replace(/&(#x?[\da-fA-F]+|[a-zA-Z][\w]*);/g, (match, entity) => {
-      // Numeric character reference
-      if (entity.charCodeAt(0) === 35) { // #
-        if (entity.charCodeAt(1) === 120 || entity.charCodeAt(1) === 88) { // x or X
-          // Hex
-          const code = Number.parseInt(entity.substring(2), 16)
-          if (!Number.isNaN(code))
-            return String.fromCodePoint(code)
-        }
-        else {
-          // Decimal
-          const code = Number.parseInt(entity.substring(1), 10)
-          if (!Number.isNaN(code))
-            return String.fromCodePoint(code)
-        }
-        return match
+    const len = text.length
+    let result = ''
+    let lastPos = 0
+
+    while (ampIdx !== -1 && ampIdx < len) {
+      // Copy everything before the &
+      if (ampIdx > lastPos)
+        result += text.substring(lastPos, ampIdx)
+
+      // Find the ;
+      const semiIdx = text.indexOf(';', ampIdx + 1)
+      if (semiIdx === -1 || semiIdx - ampIdx > 32) {
+        // No closing ; or too far away — not an entity
+        result += '&'
+        lastPos = ampIdx + 1
+        ampIdx = text.indexOf('&', lastPos)
+        continue
       }
 
-      // Custom entities first
-      if (this.customEntities[entity] !== undefined)
-        return this.customEntities[entity]
+      const entity = text.substring(ampIdx + 1, semiIdx)
 
-      // XML entities
-      if (xmlEntities[entity] !== undefined)
-        return xmlEntities[entity]
+      // Numeric character reference
+      if (entity.charCodeAt(0) === 35) { // #
+        const elen = entity.length
+        let code = 0
+        let valid = false
+        if (elen > 2 && (entity.charCodeAt(1) === 120 || entity.charCodeAt(1) === 88)) { // #x or #X
+          valid = true
+          for (let k = 2; k < elen; k++) {
+            const d = entity.charCodeAt(k)
+            if (d >= 48 && d <= 57) code = (code << 4) | (d - 48)            // 0-9
+            else if (d >= 65 && d <= 70) code = (code << 4) | (d - 55)       // A-F
+            else if (d >= 97 && d <= 102) code = (code << 4) | (d - 87)      // a-f
+            else { valid = false; break }
+          }
+        }
+        else if (elen > 1) {
+          valid = true
+          for (let k = 1; k < elen; k++) {
+            const d = entity.charCodeAt(k)
+            if (d >= 48 && d <= 57) code = code * 10 + (d - 48)
+            else { valid = false; break }
+          }
+        }
+        if (valid) {
+          result += String.fromCodePoint(code)
+        }
+        else {
+          result += text.substring(ampIdx, semiIdx + 1)
+        }
+      }
+      else {
+        // Named entity lookup — inline the 5 XML entities for speed
+        let replacement: string | undefined = this.customEntities[entity]
+        if (replacement === undefined) {
+          const elen = entity.length
+          if (elen >= 2 && elen <= 4) {
+            const e0 = entity.charCodeAt(0)
+            if (e0 === 108 && elen === 2 && entity.charCodeAt(1) === 116) // lt
+              replacement = '<'
+            else if (e0 === 103 && elen === 2 && entity.charCodeAt(1) === 116) // gt
+              replacement = '>'
+            else if (e0 === 97 && elen === 3 && entity.charCodeAt(1) === 109 && entity.charCodeAt(2) === 112) // amp
+              replacement = '&'
+            else if (e0 === 113 && elen === 4) // quot
+              replacement = entity === 'quot' ? '"' : undefined
+            else if (e0 === 97 && elen === 4) // apos
+              replacement = entity === 'apos' ? '\'' : undefined
+          }
+          if (replacement === undefined)
+            replacement = xmlEntities[entity] ?? (this.useHtmlEntities ? htmlEntities[entity] : undefined)
+        }
+        if (replacement !== undefined) {
+          result += replacement
+        }
+        else {
+          result += text.substring(ampIdx, semiIdx + 1)
+        }
+      }
 
-      // HTML entities
-      if (this.useHtmlEntities && htmlEntities[entity] !== undefined)
-        return htmlEntities[entity]
+      lastPos = semiIdx + 1
+      ampIdx = text.indexOf('&', lastPos)
+    }
 
-      return match
-    })
+    // Append remainder
+    if (lastPos < len)
+      result += text.substring(lastPos)
+
+    return result
   }
 }
 
+// Lookup table for the 5 special chars (indexed by charCode)
+// Only entries at 34,38,39,60,62 are non-empty
+const _encodeMap: string[] = []
+_encodeMap[38] = '&amp;'
+_encodeMap[60] = '&lt;'
+_encodeMap[62] = '&gt;'
+_encodeMap[34] = '&quot;'
+_encodeMap[39] = '&apos;'
+
 export function encodeEntities(text: string): string {
-  let result = ''
-  for (let i = 0; i < text.length; i++) {
+  // Fast path: scan for any special character
+  let i = 0
+  const len = text.length
+  for (; i < len; i++) {
     const ch = text.charCodeAt(i)
-    switch (ch) {
-      case 38: // &
-        result += '&amp;'
-        break
-      case 60: // <
-        result += '&lt;'
-        break
-      case 62: // >
-        result += '&gt;'
-        break
-      case 34: // "
-        result += '&quot;'
-        break
-      case 39: // '
-        result += '&apos;'
-        break
-      default:
-        result += text[i]
+    if (ch === 38 || ch === 60 || ch === 62 || ch === 34 || ch === 39)
+      break
+  }
+  if (i === len)
+    return text // no special chars
+
+  // Build result: copy prefix, then process remaining
+  let result = text.substring(0, i)
+
+  while (i < len) {
+    const ch = text.charCodeAt(i)
+    const encoded = _encodeMap[ch]
+    if (encoded !== undefined) {
+      result += encoded
+      i++
+    }
+    else {
+      // Batch run of non-special characters
+      const runStart = i
+      i++
+      while (i < len) {
+        const c = text.charCodeAt(i)
+        if (c === 38 || c === 60 || c === 62 || c === 34 || c === 39)
+          break
+        i++
+      }
+      result += text.substring(runStart, i)
     }
   }
   return result
