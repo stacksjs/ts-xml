@@ -77,20 +77,26 @@ export interface ParserOptions {
   /** Tags that don't need closing */
   unpairedTags: string[]
   /** Function to determine if an element should be an array */
+  // eslint-disable-next-line pickier/no-unused-vars
   isArray: ((tagName: string, jPath: string, isLeaf: boolean, isAttribute: boolean) => boolean) | undefined
   /** Custom tag value processor */
+  // eslint-disable-next-line pickier/no-unused-vars
   tagValueProcessor: ((tagName: string, tagValue: string, jPath: string, hasAttributes: boolean, isLeaf: boolean) => string | undefined) | undefined
   /** Custom attribute value processor */
+  // eslint-disable-next-line pickier/no-unused-vars
   attributeValueProcessor: ((attrName: string, attrValue: string, jPath: string) => string | undefined) | undefined
   /** Custom tag name transformation on parse */
+  // eslint-disable-next-line pickier/no-unused-vars
   updateTag: ((tagName: string, jPath: string, attrs: Record<string, string>) => string | boolean) | undefined
   /** Numeric parsing options */
   numberParseOptions: NumberParseOptions
   /** Ignore processing instructions */
   ignorePiTags: boolean
   /** Transform attribute name */
+  // eslint-disable-next-line pickier/no-unused-vars
   transformAttributeName: ((name: string) => string) | undefined
   /** Transform tag name */
+  // eslint-disable-next-line pickier/no-unused-vars
   transformTagName: ((name: string) => string) | undefined
   /** Ignore declaration tags like <?xml ?> */
   ignoreDeclaration: boolean
@@ -128,8 +134,10 @@ export interface BuilderOptions {
   /** Preserve element order */
   preserveOrder: boolean
   /** Tag value processor */
+  // eslint-disable-next-line pickier/no-unused-vars
   tagValueProcessor: ((name: string, value: string) => string) | undefined
   /** Attribute value processor */
+  // eslint-disable-next-line pickier/no-unused-vars
   attributeValueProcessor: ((name: string, value: string) => string) | undefined
 }
 

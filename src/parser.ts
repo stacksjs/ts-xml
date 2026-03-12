@@ -245,7 +245,7 @@ export class XMLParser {
         if (pos >= len)
           break
         const quoteChar = xml.charCodeAt(pos)
-        if (quoteChar === 34 || quoteChar === 39) { // " or '
+        if (quoteChar === 34 || quoteChar === 39) { // double or single quote
           pos++
           const valueStart = pos
           while (pos < len && xml.charCodeAt(pos) !== quoteChar)
@@ -358,14 +358,14 @@ export class XMLParser {
     if (this.exactStopNodes.has(jPath))
       return true
     for (const suffix of this.wildcardStopSuffixes) {
-      if (jPath.endsWith('.' + suffix) || jPath === suffix)
+      if (jPath.endsWith(`.${suffix}`) || jPath === suffix)
         return true
     }
     return false
   }
 
   private readStopNodeContent(xml: string, pos: number, len: number, tagName: string): { content: string, pos: number } {
-    const closingTag = '</' + tagName
+    const closingTag = `</${tagName}`
     const idx = xml.indexOf(closingTag, pos)
     if (idx === -1) {
       return { content: xml.substring(pos), pos: len }
@@ -596,7 +596,7 @@ export class XMLParser {
       }
       pos = nameEnd
 
-      const childJPath = needsJPath ? (jPath ? jPath + '.' + tagName : tagName) : ''
+      const childJPath = needsJPath ? (jPath ? `${jPath}.${tagName}` : tagName) : ''
 
       // Parse attributes
       let attrs: Record<string, string> = {} as Record<string, string>
@@ -635,7 +635,7 @@ export class XMLParser {
           }
           else if (pos < len && xml.charCodeAt(pos) === 62) {
             pos++
-            const closingTag = '</' + tagName + '>'
+            const closingTag = `</${tagName}>`
             const closeIdx = xml.indexOf(closingTag, pos)
             if (closeIdx !== -1)
               pos = closeIdx + closingTag.length
@@ -851,7 +851,7 @@ export class XMLParser {
       if (!tagName) { pos = nameEnd + 1; continue }
       pos = nameEnd
 
-      const childJPath = needsJPath ? (jPath ? jPath + '.' + tagName : tagName) : ''
+      const childJPath = needsJPath ? (jPath ? `${jPath}.${tagName}` : tagName) : ''
 
       let attrs: Record<string, string> = {} as Record<string, string>
       let hasAttrs = false

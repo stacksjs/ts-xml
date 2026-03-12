@@ -134,7 +134,7 @@ export class XMLBuilder {
               for (const k in piContent as Record<string, unknown>) {
                 if (!Object.prototype.hasOwnProperty.call(piContent, k)) continue
                 if (piAttrs) piAttrs += ' '
-                piAttrs += k + '="' + (piContent as Record<string, unknown>)[k] + '"'
+                piAttrs += `${k}="${(piContent as Record<string, unknown>)[k]}"`
               }
               parts.push(indent, '<?', piName, ' ', piAttrs, '?>', nl)
             }
@@ -248,10 +248,10 @@ export class XMLBuilder {
         const val = group[key]
         const attrName = key.startsWith(prefix) ? key.substring(prefix.length) : key
         if (val === true && suppressBoolean) {
-          attrs += ' ' + attrName
+          attrs += ` ${attrName}`
         }
         else {
-          attrs += ' ' + attrName + '="' + this.processAttrValue(typeof val === 'string' ? val : String(val)) + '"'
+          attrs += ` ${attrName}="${this.processAttrValue(typeof val === 'string' ? val : String(val))}"`
         }
       }
     }
@@ -273,10 +273,10 @@ export class XMLBuilder {
         if (!key.startsWith(prefix)) continue
         const attrName = key.substring(prefix.length)
         if (val === true && suppressBoolean) {
-          attrs += ' ' + attrName
+          attrs += ` ${attrName}`
         }
         else {
-          attrs += ' ' + attrName + '="' + this.processAttrValue(typeof val === 'string' ? val : String(val)) + '"'
+          attrs += ` ${attrName}="${this.processAttrValue(typeof val === 'string' ? val : String(val))}"`
         }
       }
     }
@@ -347,7 +347,7 @@ export class XMLBuilder {
             const name = attrKey.startsWith(prefix)
               ? attrKey.substring(prefix.length)
               : attrKey
-            attrs += ' ' + name + '="' + this.processAttrValue(typeof attrObj[attrKey] === 'string' ? attrObj[attrKey] : String(attrObj[attrKey])) + '"'
+            attrs += ` ${name}="${this.processAttrValue(typeof attrObj[attrKey] === 'string' ? attrObj[attrKey] : String(attrObj[attrKey]))}"`
           }
         }
 
