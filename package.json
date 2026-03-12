@@ -1,7 +1,7 @@
 {
   "name": "@stacksjs/ts-xml",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A fast, dependency-free XML parser, builder, and validator for TypeScript & Bun.",
   "author": "Chris Breuer <chris@stacksjs.com>",
   "license": "MIT",
