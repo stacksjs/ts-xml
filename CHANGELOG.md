@@ -1,3 +1,14 @@
+### 🧹 Chores
+
+- wip ([3be1d00](https://github.com/stacksjs/ts-xml/commit/3be1d00)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add several perf improvements ([27ba48a](https://github.com/stacksjs/ts-xml/commit/27ba48a)) _(by Chris <chrisbreuer93@gmail.com>)_
+- add benchmarks ([74d45a7](https://github.com/stacksjs/ts-xml/commit/74d45a7)) _(by Chris <chrisbreuer93@gmail.com>)_
+- initial commit ([182c8b2](https://github.com/stacksjs/ts-xml/commit/182c8b2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+### Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
 
 ## v0.3.1...main
 
