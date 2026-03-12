@@ -59,6 +59,7 @@
     "zip:darwin-arm64": "zip -j bin/bin-name-darwin-arm64.zip bin/bin-name-darwin-arm64",
     "fresh": "bunx rimraf node_modules/ bun.lock && bun i",
     "prepublishOnly": "bun --bun run build && bun run compile:all && bun run zip",
+    "bench": "bun run benchmarks/index.ts",
     "test": "bun test",
     "lint": "bunx --bun pickier .",
     "lint:fix": "bunx --bun pickier . --fix",
@@ -74,7 +75,11 @@
     "format:fix": "bunx --bun pickier . --format --write"
   },
   "devDependencies": {
-    "better-dx": "^0.2.5"
+    "better-dx": "^0.2.5",
+    "fast-xml-parser": "^5.5.3",
+    "mitata": "^1.0.34",
+    "sax": "^1.5.0",
+    "xml2js": "^0.6.2"
   },
   "git-hooks": {
     "pre-commit": {

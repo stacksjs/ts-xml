@@ -13,6 +13,7 @@ ts-xml is a fast, zero-dependency XML parser, builder, and validator for TypeScr
 - **Fully typed** — complete TypeScript type definitions for all options and outputs
 - **Comprehensive** — entity handling, namespaces, CDATA, comments, processing instructions, stop nodes, unpaired tags, and more
 - **Well tested** — 724+ tests covering parser, builder, validator, entities, and adversarial edge cases
+- **Proven fast** — 1.2x to 5.9x faster than fast-xml-parser across all benchmarks ([see results](/advanced/benchmarks))
 
 ## Quick Example
 
@@ -52,3 +53,17 @@ ts-xml is organized into four modules:
 | Entities | `src/entities.ts` | XML/HTML entity encoding and decoding |
 
 All types and default options are defined in `src/types.ts`.
+
+## Performance at a Glance
+
+Compared to fast-xml-parser (the most popular JS XML parser):
+
+| Scenario | ts-xml | fast-xml-parser | Speedup |
+|----------|--------|-----------------|---------|
+| Simple parse | 515 ns | 1.77 µs | **3.4x** |
+| Large XML (100 items) | 682 µs | 1.22 ms | **1.8x** |
+| Deep nesting (50 levels) | 10.3 µs | 60.5 µs | **5.9x** |
+| Validation | 2.96 µs | 8.11 µs | **2.7x** |
+| Round-trip (parse + build) | 14.9 µs | 34.0 µs | **2.3x** |
+
+See the full [benchmark results](/advanced/benchmarks) for all 18 test scenarios.

@@ -135,6 +135,48 @@ const xml = builder.build(ordered) // Round-trips correctly
 | `processEntities` | `boolean` | `true` | Encode entities in output |
 | `preserveOrder` | `boolean` | `false` | Build from ordered format |
 
+## Benchmarks
+
+Benchmarked on Apple M3 Pro using [mitata](https://github.com/evanwashere/mitata), comparing against [fast-xml-parser](https://github.com/NaturalIntelligence/fast-xml-parser), [xml2js](https://github.com/Leonidas-from-XIV/node-xml2js), and [sax](https://github.com/isaacs/sax-js).
+
+### Parsing
+
+| Benchmark | ts-xml | fast-xml-parser | xml2js | sax |
+|-----------|--------|-----------------|--------|-----|
+| Simple XML | **515 ns** | 1.77 µs _(3.4x slower)_ | 2.14 µs | 905 ns |
+| Medium (3 products + attrs) | **14.5 µs** | 30.4 µs _(2.1x slower)_ | 19.1 µs | 14.1 µs |
+| Large (100 products) | **682 µs** | 1.22 ms _(1.8x slower)_ | 2.06 ms | 1.91 ms |
+| Very Large (1000 products) | **7.58 ms** | 13.1 ms _(1.7x slower)_ | 11.0 ms | 19.4 ms |
+| CDATA | **973 ns** | 2.90 µs _(3.0x slower)_ | 5.90 µs | 5.35 µs |
+| Deep nesting (50 levels) | **10.3 µs** | 60.5 µs _(5.9x slower)_ | 43.0 µs | 27.4 µs |
+| RSS Feed | **16.6 µs** | 35.5 µs _(2.1x slower)_ | 53.8 µs | 28.7 µs |
+| Entities | **4.96 µs** | 6.10 µs _(1.2x slower)_ | 9.48 µs | 6.35 µs |
+| Namespaces | **5.92 µs** | 14.0 µs _(2.4x slower)_ | 12.7 µs | 8.30 µs |
+
+### Building
+
+| Benchmark | ts-xml | fast-xml-parser | xml2js |
+|-----------|--------|-----------------|--------|
+| Small object | **2.04 µs** | 3.76 µs _(1.8x slower)_ | 8.62 µs |
+| Large (100 products) | **66.2 µs** | 115 µs _(1.7x slower)_ | 202 µs |
+| Formatted output | **7.07 µs** | 9.61 µs _(1.4x slower)_ | 8.47 µs |
+
+### Validation
+
+| Benchmark | ts-xml | fast-xml-parser |
+|-----------|--------|-----------------|
+| Valid XML | **2.96 µs** | 8.11 µs _(2.7x slower)_ |
+| Large valid (1000 products) | **1.24 ms** | 3.58 ms _(2.9x slower)_ |
+| Invalid XML (early exit) | **187 ns** | 561 ns _(3.0x slower)_ |
+
+### Round-trip
+
+| Benchmark | ts-xml | fast-xml-parser |
+|-----------|--------|-----------------|
+| Parse + Build (medium) | **14.9 µs** | 34.0 µs _(2.3x slower)_ |
+
+> Run benchmarks yourself: `bun run bench`
+
 ## Testing
 
 ```bash

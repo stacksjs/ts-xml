@@ -52,6 +52,7 @@ const config: BunPressOptions = {
         { text: 'CDATA, Comments & PIs', link: '/advanced/cdata-comments-pi' },
         { text: 'Stop Nodes & Unpaired Tags', link: '/advanced/stop-nodes' },
         { text: 'Value Processing', link: '/advanced/value-processing' },
+        { text: 'Benchmarks', link: '/advanced/benchmarks' },
       ],
     },
   ],
