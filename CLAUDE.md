@@ -2,7 +2,7 @@
 
 ## About
 
-A fast, dependency-free XML parser, builder, and validator for TypeScript & Bun.
+A fast, dependency-free XML parser, builder, and validator for TypeScript and Bun. It uses character-by-character `charCodeAt` parsing for maximum performance (3-6x faster than fast-xml-parser in benchmarks). Key classes are `XMLParser` (XML to JS objects), `XMLBuilder` (JS objects to XML), and `XMLValidator` (structure validation with error reporting). It supports namespace handling, entity decoding, CDATA/comments, processing instructions, preserve-order mode, stop nodes, unpaired tags, and custom value/tag transformation callbacks.
 
 ## Linting
 
