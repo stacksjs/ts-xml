@@ -79,7 +79,7 @@
     "@types/sax": "^1.2.7",
     "@types/xml2js": "^0.4.14",
     "better-dx": "^0.2.7",
-    "fast-xml-parser": "^5.5.3",
+    "fast-xml-parser": "^5.5.5",
     "mitata": "^1.0.34",
     "sax": "^1.5.0",
     "xml2js": "^0.6.2"
