@@ -1,4 +1,4 @@
-# What is ts-xml?
+# What is ts-xml
 
 ts-xml is a fast, zero-dependency XML parser, builder, and validator for TypeScript and Bun. It provides three core APIs:
 
@@ -6,7 +6,7 @@ ts-xml is a fast, zero-dependency XML parser, builder, and validator for TypeScr
 - **XMLBuilder** — build XML strings from JavaScript objects
 - **XMLValidator** — validate XML structure and report errors with line/column info
 
-## Why ts-xml?
+## Why ts-xml
 
 - **Performance** — character-by-character parsing using `charCodeAt` comparisons, no regex in hot paths
 - **Zero dependencies** — only Bun as a runtime, nothing else

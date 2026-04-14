@@ -29,5 +29,3 @@ features:
     icon: "📦"
     details: "No runtime dependencies. Character-by-character parsing with charCodeAt for maximum performance."
 ---
-
-<Home />
