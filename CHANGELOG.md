@@ -1,3 +1,17 @@
+[Compare changes](https://github.com/stacksjs/ts-xml/compare/v0.1.1...v0.1.2)
+
+## 🐛 Bug Fixes
+
+- **build**: stop calling the compile script that went with the stub CLI ([6f576b5](https://github.com/stacksjs/ts-xml/commit/6f576b5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.1.2 ([d7d99ef](https://github.com/stacksjs/ts-xml/commit/d7d99ef)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/stacksjs/ts-xml/compare/v0.1.0...v0.1.1)
 
 ## 🐛 Bug Fixes
