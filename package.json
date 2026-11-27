@@ -49,7 +49,7 @@
     "changelog": "bunx @stacksjs/logsmith --verbose",
     "changelog:generate": "bunx @stacksjs/logsmith --output CHANGELOG.md",
     "release": "bunx --bun @stacksjs/bumpx prompt --recursive",
-    "postinstall": "bunx bun-git-hooks",
+    "hooks:install": "bun-git-hooks",
     "dev:docs": "bun --bun bunpress dev docs",
     "build:docs": "bun --bun bunpress build docs",
     "preview:docs": "bun --bun bunpress preview docs",
@@ -74,6 +74,6 @@
       },
       "autoRestage": true
     },
-    "commit-msg": "bunx gitlint --edit .git/COMMIT_EDITMSG"
+    "commit-msg": "bun x gitlint --edit \"$1\""
   }
 }
